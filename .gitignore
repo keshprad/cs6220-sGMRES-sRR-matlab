@@ -1,0 +1,8 @@
+.DS_Store
+/docs/superpowers/
+*.asv
+*.m~
+*.mex*
+codegen/
+slprj/
+results/
