@@ -108,9 +108,10 @@ end
 function testFullSketchSgmresMatchesGmres(testCase)
 A = gallery("grcar",10) + 2*eye(10);
 b = cos((1:10)');
-d = 6;
-xClassical = gmres(A,b,d);
-[xSketched,info] = sgmres(A,b,d,SketchSize=10,Truncation=d,Seed=3);
+k = 6;
+ell = k;
+xClassical = gmres(A,b,k);
+[xSketched,info] = sgmres(A,b,k,SketchSize=10,Truncation=ell,Seed=3);
 
 verifyEqual(testCase,xSketched,xClassical,AbsTol=1e-10);
 verifyLessThan(testCase,info.SketchedRelativeResidual,1);
@@ -128,11 +129,33 @@ end
 function testFullSketchSrrMatchesRr(testCase)
 A = diag(1:8);
 v1 = (1:8)';
-d = 6;
-[thetaClassical] = rr(A,v1,d,NumEigenpairs=3);
-[thetaSketched,~,info] = srr(A,v1,d,SketchSize=8,Truncation=d, ...
+k = 6;
+ell = k;
+[thetaClassical] = rr(A,v1,k,NumEigenpairs=3);
+[thetaSketched,~,info] = srr(A,v1,k,SketchSize=8,Truncation=ell, ...
     NumEigenpairs=3,Seed=5);
 
 verifyEqual(testCase,thetaSketched,thetaClassical,AbsTol=1e-10);
 verifyLessThan(testCase,max(info.SketchedRitzResiduals),1);
+end
+
+function testMethodsReportNestedTiming(testCase)
+A = gallery("grcar",8)+2*eye(8);
+b = (1:8)';
+
+[~,gmresInfo] = gmres(A,b,5);
+[~,sgmresInfo] = sgmres(A,b,5,Seed=2);
+[~,~,rrInfo] = rr(A,b,5,NumEigenpairs=1);
+[~,~,srrInfo] = srr(A,b,5,NumEigenpairs=1,Seed=2);
+[~,exactInfo] = gmres(eye(8),ones(8,1),5, ...
+    InitialGuess=ones(8,1));
+
+infos = {gmresInfo,sgmresInfo,rrInfo,srrInfo,exactInfo};
+for index = 1:numel(infos)
+    info = infos{index};
+    verifyTrue(testCase,isfinite(info.CoreTime));
+    verifyTrue(testCase,isfinite(info.WallTime));
+    verifyGreaterThanOrEqual(testCase,info.CoreTime,0);
+    verifyGreaterThanOrEqual(testCase,info.WallTime,info.CoreTime);
+end
 end

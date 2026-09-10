@@ -7,9 +7,8 @@ Concise MATLAB implementations of four Krylov-subspace methods:
 - `rr.m` -- Rayleigh--Ritz extraction from a full Arnoldi basis;
 - `srr.m` -- sketched Rayleigh--Ritz extraction from a truncated basis.
 
-This first milestone contains the methods, shared numerical helpers, and
-correctness tests. Timing sweeps and crossover heatmaps are intentionally
-deferred until the source has been reviewed.
+The repository also contains a MATLAB-native paired timing experiment that
+produces raw data, summaries, and crossover heatmaps.
 
 ## Requirements
 
@@ -31,39 +30,87 @@ n = 200;
 A = gallery("grcar",n) + 2*speye(n);
 b = ones(n,1);
 v1 = (1:n)';
-d = 40;
+k = 40;
+ellGmres = 4;
+ellRr = 2;
 
-[x,gmresInfo] = gmres(A,b,d);
-[xs,sgmresInfo] = sgmres(A,b,d,Truncation=4,Seed=1);
+[x,gmresInfo] = gmres(A,b,k);
+[xs,sgmresInfo] = sgmres(A,b,k,Truncation=ellGmres,Seed=1);
 
-[theta,U,rrInfo] = rr(A,v1,d,NumEigenpairs=5);
-[thetas,Us,srrInfo] = srr(A,v1,d, ...
-    Truncation=2,NumEigenpairs=5,Seed=1);
+[theta,U,rrInfo] = rr(A,v1,k,NumEigenpairs=5);
+[thetas,Us,srrInfo] = srr(A,v1,k, ...
+    Truncation=ellRr,NumEigenpairs=5,Seed=1);
 ```
 
 A matrix-free operator has the same interface:
 
 ```matlab
 applyA = @(x) A*x;
-x = gmres(applyA,b,d);
-theta = rr(applyA,v1,d,NumEigenpairs=5);
+x = gmres(applyA,b,k);
+theta = rr(applyA,v1,k,NumEigenpairs=5);
 ```
+
+## Crossover experiment
+
+Run a short check or the normal lecture-development sweep from the repository
+root:
+
+```matlab
+[raw,summary,paths] = experiments.runCrossover( ...
+    Preset="smoke",OutputDirectory="results/smoke");
+
+[raw,summary,paths] = experiments.runCrossover( ...
+    Preset="quick",OutputDirectory="results/quick");
+```
+
+The larger `Preset="lecture"` sweep uses grid sizes 64 and 128, Krylov
+dimensions 16 through 256, six paired repetitions, and five independent
+sketch trials. Existing nonempty output directories are protected. Pass
+`Force=true` only when deliberately replacing the named result bundle.
+
+GMRES and sGMRES use the sparse five-point matrix returned by
+`gallery("poisson",gridSize)`. A seeded local random stream constructs a
+normalized exact solution and the right-hand side is `b=A*xExact`; MATLAB's
+global random state is unchanged. RR and sRR use the same explicit sparse
+Poisson matrix, with the seeded normalized vector as the Arnoldi start.
+
+Every bundle contains `raw.csv`, `summary.csv`, and `metadata.json`, plus
+`gmres_crossover.png/.pdf` and `rr_crossover.png/.pdf` when plotting is
+enabled. Each left heatmap displays
+`classical core time / sketched core time` directly: ratios above one are
+red and favor the sketched method, ratios below one are blue and favor the
+classical method, and one is neutral white. The right heatmap directly reports
+the sketched/classical true-residual ratio using the same scale: blue below
+one means a smaller sketched residual, while red above one means a larger
+sketched residual.
+Gray cells marked `x` did not pass the fixed-work and accuracy gates;
+open circles identify comparable timings for which neither method met the
+configured absolute residual threshold.
+
+The calls are paired and their order alternates to reduce timing bias.
+Problem construction, file output, plotting, and the built-in `eigs` oracle
+used to check RR targets are outside the method timings. The sketch draw and
+DCT applications remain inside the sketched timings.
 
 ## Public interfaces
 
 ```matlab
-[x,info] = gmres(A,b,d,InitialGuess=x0)
+[x,info] = gmres(A,b,k,InitialGuess=x0)
 
-[x,info] = sgmres(A,b,d, ...
-    InitialGuess=x0,SketchSize=s,Truncation=k,Seed=seed)
+[x,info] = sgmres(A,b,k, ...
+    InitialGuess=x0,SketchSize=s,Truncation=ell,Seed=seed)
 
-[theta,U,info] = rr(A,v1,d,NumEigenpairs=q)
+[theta,U,info] = rr(A,v1,k,NumEigenpairs=q)
 
-[theta,U,info] = srr(A,v1,d, ...
-    SketchSize=s,Truncation=k,NumEigenpairs=q,Seed=seed)
+[theta,U,info] = srr(A,v1,k, ...
+    SketchSize=s,Truncation=ell,NumEigenpairs=q,Seed=seed)
 ```
 
-GMRES performs exactly `d` Arnoldi steps unless happy breakdown occurs. It
+The notation matches the lecture notes: `k` is the Krylov dimension and
+effective iteration count, while `ell` is the number of recent basis vectors
+used by truncated Arnoldi.
+
+GMRES performs exactly `k` Arnoldi steps unless happy breakdown occurs. It
 does not stop early at a residual tolerance; that fixed-work behavior will
 make the later timing comparison easier to interpret.
 
@@ -73,18 +120,18 @@ examples:
 | Method | Arnoldi orthogonalization | Sketch |
 |---|---|---|
 | GMRES | all previous vectors, two passes | none |
-| sGMRES | latest `k=4` vectors, two passes | DCT-II, `s=min(2(d+1),n)` |
+| sGMRES | latest `ell=4` vectors, two passes | DCT-II, `s=min(2(k+1),n)` |
 | RR | all previous vectors, two passes | none |
-| sRR | latest `k=2` vectors, two passes | DCT-IV, `s=min(4d,n)` |
+| sRR | latest `ell=2` vectors, two passes | DCT-IV, `s=min(4k,n)` |
 
 Each sketched call constructs one seeded linear map and applies that same map
 to every related vector or matrix. The random draw uses a local `RandStream`,
 so it does not alter MATLAB's global random state.
 
 The `info` structures report the achieved Krylov dimension, breakdown status,
-true residual diagnostics, and method-specific quantities such as sketch size
-and the condition number of the reduced QR factor. RR and sRR select Ritz
-values with largest real part.
+true residual diagnostics, `CoreTime`, `WallTime`, and method-specific
+quantities such as sketch size and the condition number of the reduced QR
+factor. RR and sRR select Ritz values with largest real part.
 
 ## Arnoldi implementation
 
@@ -93,8 +140,8 @@ Hessenberg matrix. The visible helpers
 `krylov.arnoldi` and `krylov.truncatedArnoldi` implement the recurrence
 directly with matrix multiplication, inner products, and norms.
 
-`gallery("krylov",A,v1,d)` is not used: it forms the raw vectors
-`[v1,A*v1,...,A^(d-1)*v1]` without orthogonalizing them.
+`gallery("krylov",A,v1,k)` is not used: it forms the raw vectors
+`[v1,A*v1,...,A^(k-1)*v1]` without orthogonalizing them.
 
 The remaining shared helpers are also visible in the `+krylov` package:
 

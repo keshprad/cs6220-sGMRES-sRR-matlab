@@ -1,31 +1,33 @@
-function [x,info] = sgmres(A,b,d,options)
+function [x,info] = sgmres(A,b,k,options)
 %SGMRES Fixed-dimension sketched GMRES using truncated Arnoldi.
 %
-%   [X,INFO] = SGMRES(A,B,D) uses truncation 4 and a DCT-II sketch with
-%   MIN(2*(D+1),NUMEL(B)) rows.
+%   [X,INFO] = SGMRES(A,B,K) uses truncation length ell=4 and a DCT-II
+%   sketch with MIN(2*(K+1),NUMEL(B)) rows.
 %
 %   Name-value options are InitialGuess, SketchSize, Truncation, and Seed.
 
 arguments
     A
     b (:,1) {mustBeNumeric,mustBeFinite}
-    d (1,1) double {mustBeInteger,mustBePositive}
+    k (1,1) double {mustBeInteger,mustBePositive}
     options.InitialGuess = []
     options.SketchSize = []
     options.Truncation (1,1) double {mustBeInteger,mustBePositive} = 4
     options.Seed (1,1) double {mustBeInteger,mustBeNonnegative} = 0
 end
 
+totalTimer = tic;
 if ~isfloat(b)
     error("sgmres:InvalidRightHandSide", ...
         "b must be single or double precision.");
 end
 n = numel(b);
-if d > n
+if k > n
     error("sgmres:InvalidDimension", ...
-        "d must not exceed the ambient dimension.");
+        "k must not exceed the ambient dimension.");
 end
-sketchSize = validatedSketchSize(options.SketchSize,d,n);
+ell = options.Truncation;
+sketchSize = validatedSketchSize(options.SketchSize,k,n);
 apply = krylov.asOperator(A,n);
 x0 = initialGuess(options.InitialGuess,b);
 r0 = b-apply(x0);
@@ -33,20 +35,23 @@ denominator = max(norm(b),eps(class(real(b))));
 
 if norm(r0) == 0
     x = x0;
+    coreTime = toc(totalTimer);
     info = struct( ...
         Dimension=0, ...
         Breakdown=true, ...
         RelativeResidual=0, ...
         SketchedRelativeResidual=0, ...
         SketchSize=sketchSize, ...
-        Truncation=options.Truncation, ...
+        Truncation=ell, ...
         Seed=options.Seed, ...
-        ReducedCondition=1);
+        ReducedCondition=1, ...
+        CoreTime=coreTime, ...
+        WallTime=toc(totalTimer));
     return
 end
 
 [V,AV,arnoldiInfo] = krylov.truncatedArnoldi( ...
-    apply,r0,d,options.Truncation);
+    apply,r0,k,ell);
 m = arnoldiInfo.Dimension;
 sketch = krylov.srdct(n,sketchSize,2,options.Seed);
 sketchedResidual = sketch.Apply(r0);
@@ -56,6 +61,7 @@ permutedCoefficients = R\(Q'*sketchedResidual);
 y = zeros(m,1,"like",permutedCoefficients);
 y(p) = permutedCoefficients;
 x = x0+V*y;
+coreTime = toc(totalTimer);
 
 trueResidual = b-apply(x);
 sketchedRightHandSide = sketch.Apply(b);
@@ -68,24 +74,26 @@ info = struct( ...
     SketchedRelativeResidual= ...
         norm(sketchedResidual-sketchedImages*y)/sketchedDenominator, ...
     SketchSize=sketchSize, ...
-    Truncation=options.Truncation, ...
+    Truncation=ell, ...
     Seed=options.Seed, ...
-    ReducedCondition=cond(R));
+    ReducedCondition=cond(R), ...
+    CoreTime=coreTime, ...
+    WallTime=toc(totalTimer));
 end
 
-function sketchSize = validatedSketchSize(candidate,d,n)
+function sketchSize = validatedSketchSize(candidate,k,n)
 if isempty(candidate)
-    sketchSize = min(2*(d+1),n);
+    sketchSize = min(2*(k+1),n);
 elseif isnumeric(candidate) && isscalar(candidate) && isfinite(candidate) && ...
         candidate == fix(candidate)
     sketchSize = double(candidate);
 else
     error("sgmres:InvalidSketchSize", ...
-        "SketchSize must be an integer between d and numel(b).");
+        "SketchSize must be an integer between k and numel(b).");
 end
-if sketchSize < d || sketchSize > n
+if sketchSize < k || sketchSize > n
     error("sgmres:InvalidSketchSize", ...
-        "SketchSize must be an integer between d and numel(b).");
+        "SketchSize must be an integer between k and numel(b).");
 end
 end
 

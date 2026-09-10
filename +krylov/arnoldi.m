@@ -1,10 +1,10 @@
-function [V,H,info] = arnoldi(A,v1,d)
+function [V,H,info] = arnoldi(A,v1,k)
 %ARNOLDI Build an orthonormal Krylov basis with two Gram--Schmidt passes.
 
 arguments
     A
     v1 (:,1) {mustBeNumeric,mustBeFinite}
-    d (1,1) double {mustBeInteger,mustBePositive}
+    k (1,1) double {mustBeInteger,mustBePositive}
 end
 
 if ~isfloat(v1)
@@ -12,9 +12,9 @@ if ~isfloat(v1)
         "v1 must be single or double precision.");
 end
 n = numel(v1);
-if d > n
+if k > n
     error("krylov:arnoldi:InvalidDimension", ...
-        "d must not exceed the ambient dimension.");
+        "k must not exceed the ambient dimension.");
 end
 beta = norm(v1);
 if beta == 0
@@ -23,13 +23,13 @@ if beta == 0
 end
 
 apply = krylov.asOperator(A,n);
-V = zeros(n,d+1,"like",v1);
-H = zeros(d+1,d,"like",v1);
+V = zeros(n,k+1,"like",v1);
+H = zeros(k+1,k,"like",v1);
 V(:,1) = v1/beta;
 breakdown = false;
 m = 0;
 
-for j = 1:d
+for j = 1:k
     image = apply(V(:,j));
     w = image;
     active = V(:,1:j);
