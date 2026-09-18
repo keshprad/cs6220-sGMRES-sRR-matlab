@@ -258,11 +258,13 @@ verifyEqual(testCase,data.Maximum,[8 NaN]);
 verifyEqual(testCase,data.Samples{1},[1 2 3 4 8]);
 verifyEmpty(testCase,data.Samples{2});
 verifyEqual(testCase,data.XScale,"log");
-verifyEqual(testCase,data.SpeedScale,"log");
+verifyEqual(testCase,data.SpeedScale,"linear");
 verifyEqual(testCase,data.ResidualScale,"linear");
-verifyEqual(testCase,data.SpeedTicks,[1 2]);
+verifyEqual(testCase,data.SpeedTicks,0:2:16);
+verifyEqual(testCase,data.SpeedLimits,[0 17]);
 rrData = plotData([plotData.Suite] == "rr");
 verifyEqual(testCase,rrData.Statuses,"unconverged");
+verifyEqual(testCase,rrData.SpeedLimits,data.SpeedLimits);
 verifyEqual(testCase,rrData.Samples{1},[1 2 3 4 8]);
 end
 

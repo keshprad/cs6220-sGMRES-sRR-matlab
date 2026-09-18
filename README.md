@@ -78,11 +78,14 @@ Every bundle contains `raw.csv`, `summary.csv`, and `metadata.json`, plus
 `gmres_crossover.png/.pdf` and `rr_crossover.png/.pdf` when plotting is
 enabled. Each chart has one line per grid size, with Krylov dimension on a
 logarithmic horizontal axis. The left panel plots the median paired
-`classical core time / sketched core time` on a logarithmic vertical axis;
-values above one favor the sketched method. Error bars show the 25th–75th
+`classical core time / sketched core time` on a linear vertical axis;
+both suites share the same limits (0–17 for the lecture data). The endpoint
+for the largest grid is labeled. Values above one favor the sketched method.
+Error bars and light shaded bands show the 25th–75th
 percentiles of the same paired ratios used for the median (30 pairs per
 setting in the lecture sweep). They show timing spread, not confidence
-intervals. The right panel plots the median
+intervals. Bands connect quartile endpoints with straight segments on the
+displayed axes, leaving missing settings as gaps. The right panel plots the median
 sketched/classical true-residual ratio on a linear vertical axis, with:
 
 - a shaded band for the 25th–75th percentiles;

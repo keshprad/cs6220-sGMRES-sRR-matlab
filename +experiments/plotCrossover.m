@@ -29,13 +29,17 @@ end
 
 paths = strings(0,1);
 plotData = struct([]);
+visible = ismember(summary.CellStatus,["ok" "unconverged"]);
+upper = summary.ComparableCoreSpeedupQ75(visible);
+upper = upper(isfinite(upper));
+speedLimit = max(17,ceil(max([upper;0]))+1);
 for suite = ["gmres" "rr"]
     suiteSummary = summary(summary.Suite == suite,:);
     if isempty(suiteSummary)
         continue
     end
     [newPaths,data] = plotSuite(raw(raw.Suite == suite,:), ...
-        suiteSummary,suite,outputDirectory);
+        suiteSummary,suite,outputDirectory,speedLimit);
     paths = [paths;newPaths]; %#ok<AGROW>
     if isempty(plotData)
         plotData = data;
@@ -45,7 +49,7 @@ for suite = ["gmres" "rr"]
 end
 end
 
-function [paths,data] = plotSuite(raw,summary,suite,outputDirectory)
+function [paths,data] = plotSuite(raw,summary,suite,outputDirectory,speedLimit)
 grids = unique(summary.GridSize,"sorted");
 dimensions = unique(summary.Dimension,"sorted")';
 speedup = NaN(numel(grids),numel(dimensions));
@@ -115,6 +119,15 @@ for g = 1:numel(grids)
     faintColor = 0.55*color+0.45;
     marker = markers(mod(g-1,numel(markers))+1);
     label = sprintf("g = %g (n = %g)",grids(g),matrixSizes(g));
+    validSpeed = isfinite(speedLow(g,:)) & isfinite(speedHigh(g,:));
+    starts = find(diff([false validSpeed false]) == 1);
+    stops = find(diff([false validSpeed false]) == -1)-1;
+    for segment = 1:numel(starts)
+        idx = starts(segment):stops(segment);
+        fill(speedAxis,[dimensions(idx) fliplr(dimensions(idx))], ...
+            [speedLow(g,idx) fliplr(speedHigh(g,idx))],color, ...
+            FaceAlpha=0.13,EdgeColor="none",HandleVisibility="off");
+    end
     handles(g) = errorbar(speedAxis,dimensions,speedup(g,:), ...
         speedup(g,:)-speedLow(g,:),speedHigh(g,:)-speedup(g,:), ...
         Color=color,Marker=marker,MarkerFaceColor=color, ...
@@ -169,20 +182,19 @@ for ax = [speedAxis residualAxis]
     yline(ax,1,"--",Color=[0.35 0.35 0.35],HandleVisibility="off");
     xlabel(ax,"Krylov dimension k",Color="black");
 end
-speedAxis.YScale = "log";
-speedValues = [speedup(:);speedLow(:);speedHigh(:)];
-positive = speedValues(isfinite(speedValues) & speedValues > 0);
+speedAxis.YScale = "linear";
 if any(isfinite(speedup(:)) & speedup(:) <= 0)
     error("experiments:plotCrossover:NonpositiveSpeedup", ...
-        "Speedup ratios must be positive for logarithmic scaling.");
+        "Speedup ratios must be positive.");
 end
-exponents = floor(log2(min([positive;1]))):ceil(log2(max([positive;1])));
-if numel(exponents) == 1
-    exponents = exponents+[-1 0 1];
-end
-speedAxis.YTick = 2.^exponents;
+speedAxis.YTick = 0:max(2,2*ceil(speedLimit/18)):speedLimit;
 speedAxis.YTickLabel = compose("%g",speedAxis.YTick);
-speedAxis.YLim = [speedAxis.YTick(1)/1.05 speedAxis.YTick(end)*1.15];
+speedAxis.YLim = [0 speedLimit];
+if isfinite(speedup(end,end))
+    text(speedAxis,dimensions(end)/1.07,speedup(end,end)+0.04*speedLimit, ...
+        sprintf("%.1fx",speedup(end,end)),HorizontalAlignment="right", ...
+        Color=colors(end,:),FontSize=12,FontWeight="bold");
+end
 residualValues = [minimum(:);maximum(:);1];
 residualValues = residualValues(isfinite(residualValues));
 padding = max(0.05,0.1*(max(residualValues)-min(residualValues)));
@@ -212,7 +224,8 @@ data = struct(Suite=suite,GridSizes=grids,Dimensions=dimensions, ...
     QuartileLow=quartileLow,QuartileHigh=quartileHigh, ...
     Minimum=minimum,Maximum=maximum,Statuses=statuses, ...
     XScale=string(speedAxis.XScale),SpeedScale=string(speedAxis.YScale), ...
-    ResidualScale=string(residualAxis.YScale),SpeedTicks=speedAxis.YTick);
+    ResidualScale=string(residualAxis.YScale),SpeedTicks=speedAxis.YTick, ...
+    SpeedLimits=speedAxis.YLim);
 data.Samples = samples;
 clear cleanup
 end
