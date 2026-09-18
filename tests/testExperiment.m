@@ -172,8 +172,10 @@ output = fullfile(testCase.TestData.TempFolder,"bundle");
 [raw,summary,paths] = experiments.runCrossover( ...
     Suites=["gmres" "rr"],GridSizes=4,Dimensions=3, ...
     Repetitions=2,SketchTrials=1,Warmups=0, ...
-    OutputDirectory=output,MakePlots=false);
+    OutputDirectory=output,MakePlots=true);
 
+verifyEqual(testCase,numel(paths.Figures),4);
+verifyTrue(testCase,all(isfile(paths.Figures)));
 verifyEqual(testCase,height(raw),8);
 verifyEqual(testCase,height(summary),2);
 verifyTrue(testCase,isfile(paths.Raw));
@@ -208,23 +210,31 @@ verifyError(testCase,@() experiments.runCrossover( ...
     "experiments:runCrossover:UnsafeOutputDirectory");
 end
 
-function testPlotCrossoverExportsFigures(testCase)
-summary = table( ...
-    ["gmres";"gmres";"gmres";"rr";"rr";"rr"], ...
-    [4;4;6;4;4;6], ...
-    [16;16;36;32;32;72], ...
-    [2;3;2;2;3;2], ...
-    [0.5;2;NaN;0.75;3;NaN], ...
-    [0.8;5;100;0.9;4;50], ...
-    ["ok";"unconverged";"not-comparable"; ...
-    "ok";"unconverged";"not-comparable"], ...
-    VariableNames=["Suite" "GridSize" "MatrixSize" "Dimension" ...
-    "ComparableCoreSpeedup" "ResidualRatioMedian" "CellStatus"]);
-output = fullfile(testCase.TestData.TempFolder,"figures");
+function testLinePlotsExportIndependentSketchSpread(testCase)
+raw = plotFixture();
+rrRaw = raw;
+rrRaw.Suite(:) = "rr";
+rrRaw.Method(raw.Method == "GMRES") = "RR";
+rrRaw.Method(raw.Method == "sGMRES") = "sRR";
+rrRaw.RitzResidual = raw.RelativeResidual;
+rrRaw.RitzReal(:) = 4;
+rrRaw.RitzImag(:) = 0;
+rrRaw.OracleDistance(:) = 0;
+rrRaw.OracleResidual(:) = 1e-14;
+raw = [raw;rrRaw];
+cfg = experiments.config(GridSizes=4,Dimensions=3,MakePlots=false);
+summary = experiments.summarize(raw,cfg);
+summary.CellStatus(summary.Suite == "rr") = "unconverged";
+missing = summary(1,:);
+missing.Dimension = 6;
+missing.CellStatus = "not-comparable";
+missing.ComparableCoreSpeedup = NaN;
+summary = [summary;missing];
+output = fullfile(testCase.TestData.TempFolder,"line-figures");
 mkdir(output);
 figuresBefore = numel(findall(groot,Type="figure"));
 
-[paths,plotData] = experiments.plotCrossover(summary,output);
+[paths,plotData] = experiments.plotCrossover(raw,summary,output);
 
 verifyEqual(testCase,numel(paths),4);
 verifyTrue(testCase,all(isfile(paths)));
@@ -232,69 +242,61 @@ for path = reshape(paths,1,[])
     verifyGreaterThan(testCase,dir(path).bytes,0);
 end
 verifyEqual(testCase,numel(findall(groot,Type="figure")),figuresBefore);
-gmresData = plotData([plotData.Suite] == "gmres");
-verifyEqual(testCase,gmresData.Speedup,[0.5 2;NaN NaN]);
-verifyEqual(testCase,gmresData.ResidualRatio,[0.8 5;NaN NaN]);
-hasResidualLabels = isfield(gmresData,"ResidualLabels");
-verifyTrue(testCase,hasResidualLabels, ...
-    "The residual heatmap must expose the labels drawn in its cells.");
-if hasResidualLabels
-    verifyEqual(testCase,gmresData.ResidualLabels, ...
-        ["0.80x" "5.00x";"" ""]);
-end
-verifyEqual(testCase,gmresData.ResidualColormap(1,:), ...
-    [0.15 0.35 0.70],AbsTol=1e-12);
-verifyEqual(testCase,gmresData.ResidualColormap(end,:), ...
-    [0.75 0.15 0.20],AbsTol=1e-12);
-neutralIndex = round((1-gmresData.ResidualColorLimits(1))/ ...
-    diff(gmresData.ResidualColorLimits)* ...
-    (size(gmresData.ResidualColormap,1)-1))+1;
-verifyEqual(testCase,gmresData.ResidualColormap(neutralIndex,:), ...
-    [1 1 1],AbsTol=1e-12);
+data = plotData([plotData.Suite] == "gmres");
+verifyEqual(testCase,data.Speedup,[2 NaN]);
+verifyEqual(testCase,data.ResidualRatio,[3 NaN]);
+verifyEqual(testCase,data.QuartileLow,[2 NaN]);
+verifyEqual(testCase,data.QuartileHigh,[4 NaN]);
+verifyEqual(testCase,data.Minimum,[1 NaN]);
+verifyEqual(testCase,data.Maximum,[8 NaN]);
+verifyEqual(testCase,data.Samples{1},[1 2 3 4 8]);
+verifyEmpty(testCase,data.Samples{2});
+verifyEqual(testCase,data.XScale,"log");
+verifyEqual(testCase,data.SpeedScale,"log");
+verifyEqual(testCase,data.ResidualScale,"linear");
+verifyEqual(testCase,data.SpeedTicks,[1 2]);
+rrData = plotData([plotData.Suite] == "rr");
+verifyEqual(testCase,rrData.Statuses,"unconverged");
+verifyEqual(testCase,rrData.Samples{1},[1 2 3 4 8]);
 end
 
-function testSpeedHeatmapUsesLogColorScaleOnly(testCase)
-summary = table( ...
-    ["gmres";"gmres"], ...
-    [4;6], ...
-    [16;36], ...
-    [2;2], ...
-    [0.5;2], ...
-    [0.8;5], ...
-    ["ok";"ok"], ...
-    VariableNames=["Suite" "GridSize" "MatrixSize" "Dimension" ...
-    "ComparableCoreSpeedup" "ResidualRatioMedian" "CellStatus"]);
-output = fullfile(testCase.TestData.TempFolder,"log-color-scale");
-mkdir(output);
-
-[~,plotData] = experiments.plotCrossover(summary,output);
-
-verifyEqual(testCase,plotData.SpeedColorScale,"log");
-verifyEqual(testCase,plotData.ResidualColorScale,"linear");
-verifyEqual(testCase,plotData.SpeedColormap(129,:), ...
-    [1 1 1],AbsTol=1e-12);
+function testResidualSamplesDoNotWeightTimingRepetitions(testCase)
+raw = plotFixture();
+for repetition = 3:9
+    extra = raw(1:2,:);
+    extra.Repetition(:) = repetition;
+    raw = [raw;extra]; %#ok<AGROW>
+end
+values = experiments.residualSamples(raw,"gmres",3);
+verifyEqual(testCase,values,[1 2 3 4 8]);
+verifyEqual(testCase,median(values),3);
 end
 
-function testSpeedHeatmapUsesBaseTwoTicks(testCase)
-summary = table( ...
-    ["gmres";"gmres"], ...
-    [4;6], ...
-    [16;36], ...
-    [2;2], ...
-    [0.58;15], ...
-    [1;1], ...
-    ["ok";"ok"], ...
-    VariableNames=["Suite" "GridSize" "MatrixSize" "Dimension" ...
-    "ComparableCoreSpeedup" "ResidualRatioMedian" "CellStatus"]);
-output = fullfile(testCase.TestData.TempFolder,"base-two-colorbar");
-mkdir(output);
+function testResidualSamplesExcludeFailedAndIncompletePairs(testCase)
+raw = plotFixture();
+raw.Status(raw.SketchTrial == 2) = "error";
+raw.AchievedDimension(raw.SketchTrial == 3) = 2;
+raw(raw.SketchTrial == 4 & raw.Method == "sGMRES",:) = [];
+raw.RelativeResidual(raw.SketchTrial == 1) = 0;
+verifyEqual(testCase,experiments.residualSamples(raw,"gmres",3),[1 8]);
+verifyError(testCase,@() experiments.residualSamples([raw;raw(1,:)],"gmres",3), ...
+    "experiments:plotCrossover:DuplicatePair");
+raw.RelativeResidual(raw.SketchTrial == 5 & raw.Method == "GMRES") = 0;
+verifyError(testCase,@() experiments.residualSamples(raw,"gmres",3), ...
+    "experiments:plotCrossover:NonfiniteResidualRatio");
+end
 
-[~,plotData] = experiments.plotCrossover(summary,output);
-
-verifyEqual(testCase,plotData.SpeedColorLimits,[0.5 16]);
-verifyEqual(testCase,plotData.SpeedColorTicks,[0.5 1 2 4 8 16]);
-verifyEqual(testCase,plotData.SpeedColorTickLabels, ...
-    ["0.5" "1" "2" "4" "8" "16"]);
+function raw = plotFixture()
+ratios = [1 2 3 4 8];
+raw = table();
+for trial = 1:5
+    pair = syntheticRows(Suite=repmat("gmres",4,1), ...
+        Method=["GMRES";"sGMRES";"GMRES";"sGMRES"], ...
+        Repetition=[1;1;2;2],CoreTime=[2;1;2;1],WallTime=[3;2;3;2], ...
+        RelativeResidual=0.01*[1;ratios(trial);1;ratios(trial)]);
+    pair.SketchTrial(:) = trial;
+    raw = [raw;pair]; %#ok<AGROW>
+end
 end
 
 function raw = syntheticRows(options)

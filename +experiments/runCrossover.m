@@ -48,7 +48,7 @@ raw = experiments.collectRaw(cfg);
 summary = experiments.summarize(raw,cfg);
 paths = experiments.writeOutputs(raw,summary,cfg,cfg.OutputDirectory);
 if cfg.MakePlots
-    paths.Figures = experiments.plotCrossover(summary,cfg.OutputDirectory);
+    paths.Figures = experiments.plotCrossover(raw,summary,cfg.OutputDirectory);
 else
     paths.Figures = strings(0,1);
 end

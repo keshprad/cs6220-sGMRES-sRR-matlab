@@ -8,7 +8,7 @@ Concise MATLAB implementations of four Krylov-subspace methods:
 - `srr.m` -- sketched Rayleigh--Ritz extraction from a truncated basis.
 
 The repository also contains a MATLAB-native paired timing experiment that
-produces raw data, summaries, and crossover heatmaps.
+produces raw data, summaries, and crossover line charts.
 
 ## Requirements
 
@@ -76,16 +76,38 @@ Poisson matrix, with the seeded normalized vector as the Arnoldi start.
 
 Every bundle contains `raw.csv`, `summary.csv`, and `metadata.json`, plus
 `gmres_crossover.png/.pdf` and `rr_crossover.png/.pdf` when plotting is
-enabled. Each left heatmap displays
-`classical core time / sketched core time` directly: ratios above one are
-red and favor the sketched method, ratios below one are blue and favor the
-classical method, and one is neutral white. The right heatmap directly reports
-the sketched/classical true-residual ratio using the same scale: blue below
-one means a smaller sketched residual, while red above one means a larger
-sketched residual.
-Gray cells marked `x` did not pass the fixed-work and accuracy gates;
-open circles identify comparable timings for which neither method met the
-configured absolute residual threshold.
+enabled. Each chart has one line per grid size, with Krylov dimension on a
+logarithmic horizontal axis. The left panel plots the median paired
+`classical core time / sketched core time` on a logarithmic vertical axis;
+values above one favor the sketched method. The right panel plots the median
+sketched/classical true-residual ratio on a linear vertical axis, with:
+
+- a shaded band for the 25th–75th percentiles;
+- whiskers spanning the minimum and maximum;
+- faint points for the independent sketch trials.
+
+Residual spread uses one median paired residual ratio per sketch trial, so
+repeated timings do not count as independent residual samples. Quartiles use
+linear interpolation at ranks `1+(N-1)*p`. The bands describe observed spread,
+not confidence intervals. Dashed lines mark a ratio of one. Hollow markers
+identify settings where no comparable pair has both residuals at or below
+the configured residual threshold. Settings that fail the fixed-work or
+accuracy gates are left as gaps. Explanatory text belongs in the figure
+caption; it is not embedded beneath the chart.
+
+To regenerate charts from saved measurements without rerunning the experiment:
+
+```matlab
+folder = "results/lecture";
+raw = readtable(fullfile(folder,"raw.csv"),TextType="string");
+summary = readtable(fullfile(folder,"summary.csv"),TextType="string");
+[paths,plotData] = experiments.plotCrossover(raw,summary,folder);
+```
+
+`plotData` exposes the plotted medians, quartiles, extrema, and individual
+sketch ratios for verification. The plotting interface now requires `raw`
+before `summary`; old summary-only calls must be updated because a median
+cannot reconstruct the spread.
 
 The calls are paired and their order alternates to reduce timing bias.
 Problem construction, file output, plotting, and the built-in `eigs` oracle

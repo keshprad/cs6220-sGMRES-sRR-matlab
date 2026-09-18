@@ -1,16 +1,25 @@
-function [paths,plotData] = plotCrossover(summary,outputDirectory)
-%PLOTCROSSOVER Export annotated timing and residual heatmaps.
+function [paths,plotData] = plotCrossover(raw,summary,outputDirectory)
+%PLOTCROSSOVER Export speedup curves and residual spread across sketch trials.
+% Raw measurements are required: summary medians cannot recover quartiles.
 
 arguments
+    raw table
     summary table
     outputDirectory (1,1) string
 end
 
 required = ["Suite" "GridSize" "MatrixSize" "Dimension" ...
-    "ComparableCoreSpeedup" "ResidualRatioMedian" "CellStatus"];
+    "ComparableCoreSpeedup" "CellStatus"];
 if any(~ismember(required,string(summary.Properties.VariableNames)))
     error("experiments:plotCrossover:InvalidSummary", ...
         "The summary table does not contain the required plot columns.");
+end
+requiredRaw = ["Suite" "GridSize" "Dimension" "Method" "SketchTrial" ...
+    "Repetition" "Status" "AchievedDimension" "CoreTime" "WallTime" ...
+    "RelativeResidual" "RitzResidual" "RitzReal" "RitzImag"];
+if any(~ismember(requiredRaw,string(raw.Properties.VariableNames)))
+    error("experiments:plotCrossover:InvalidRaw", ...
+        "Raw paired measurements are required for residual spread.");
 end
 if ~isfolder(outputDirectory)
     error("experiments:plotCrossover:MissingOutputDirectory", ...
@@ -18,230 +27,190 @@ if ~isfolder(outputDirectory)
 end
 
 paths = strings(0,1);
-plotData = repmat(struct( ...
-    Suite="",GridSizes=[],Dimensions=[],Speedup=[], ...
-    ResidualRatio=[],ResidualLabels=[],Statuses=[],SpeedColorLimits=[], ...
-    ResidualColorLimits=[],SpeedColorScale="",ResidualColorScale="", ...
-    SpeedColorTicks=[],SpeedColorTickLabels=[],SpeedColormap=[], ...
-    ResidualColormap=[]),0,1);
+plotData = struct([]);
 for suite = ["gmres" "rr"]
     suiteSummary = summary(summary.Suite == suite,:);
     if isempty(suiteSummary)
         continue
     end
-    [newPaths,data] = plotSuite(suiteSummary,suite,outputDirectory);
+    [newPaths,data] = plotSuite(raw(raw.Suite == suite,:), ...
+        suiteSummary,suite,outputDirectory);
     paths = [paths;newPaths]; %#ok<AGROW>
-    plotData(end+1,1) = data; %#ok<AGROW>
+    if isempty(plotData)
+        plotData = data;
+    else
+        plotData(end+1,1) = data; %#ok<AGROW>
+    end
 end
 end
 
-function [paths,data] = plotSuite(summary,suite,outputDirectory)
+function [paths,data] = plotSuite(raw,summary,suite,outputDirectory)
 grids = unique(summary.GridSize,"sorted");
-dimensions = unique(summary.Dimension,"sorted");
+dimensions = unique(summary.Dimension,"sorted")';
 speedup = NaN(numel(grids),numel(dimensions));
 residualRatio = NaN(size(speedup));
+quartileLow = NaN(size(speedup));
+quartileHigh = NaN(size(speedup));
+minimum = NaN(size(speedup));
+maximum = NaN(size(speedup));
+samples = cell(size(speedup));
 statuses = repmat("missing",size(speedup));
 matrixSizes = NaN(numel(grids),1);
-
 for row = 1:height(summary)
-    gridIndex = find(grids == summary.GridSize(row),1);
-    dimensionIndex = find(dimensions == summary.Dimension(row),1);
-    status = summary.CellStatus(row);
-    statuses(gridIndex,dimensionIndex) = status;
-    if status == "ok" || status == "unconverged"
-        speedup(gridIndex,dimensionIndex) = ...
-            summary.ComparableCoreSpeedup(row);
-        residualRatio(gridIndex,dimensionIndex) = ...
-            summary.ResidualRatioMedian(row);
+    g = find(grids == summary.GridSize(row),1);
+    k = find(dimensions == summary.Dimension(row),1);
+    if statuses(g,k) ~= "missing"
+        error("experiments:plotCrossover:DuplicateSetting", ...
+            "Summary contains more than one row for a grid and dimension.");
     end
-    matrixSizes(gridIndex) = summary.MatrixSize(row);
+    statuses(g,k) = summary.CellStatus(row);
+    matrixSizes(g) = summary.MatrixSize(row);
+    if ~ismember(statuses(g,k),["ok" "unconverged"])
+        continue
+    end
+    speedup(g,k) = summary.ComparableCoreSpeedup(row);
+    members = raw.GridSize == grids(g) & raw.Dimension == dimensions(k);
+    values = experiments.residualSamples(raw(members,:),suite,dimensions(k));
+    if isempty(values)
+        error("experiments:plotCrossover:MissingSamples", ...
+            "A plotted setting has no valid paired residual measurements.");
+    end
+    samples{g,k} = values;
+    residualRatio(g,k) = median(values);
+    % Linear interpolation at ranks 1+(N-1)*p matches the lecture plots.
+    sorted = sort(values);
+    if numel(sorted) == 1
+        quartiles = [sorted sorted];
+    else
+        quartiles = interp1(1:numel(sorted),sorted, ...
+            1+(numel(sorted)-1)*[0.25 0.75]);
+    end
+    quartileLow(g,k) = quartiles(1);
+    quartileHigh(g,k) = quartiles(2);
+    minimum(g,k) = min(values);
+    maximum(g,k) = max(values);
 end
 
 figureHandle = figure(Visible="off",Color="white", ...
-    Position=[100 100 1320 500]);
+    Position=[100 100 1320 480]);
 cleanup = onCleanup(@() close(figureHandle));
-layout = tiledlayout(figureHandle,1,2, ...
-    Padding="compact",TileSpacing="loose");
-
+layout = tiledlayout(figureHandle,1,2,Padding="compact",TileSpacing="loose");
 speedAxis = nexttile(layout);
-drawImage(speedAxis,speedup);
-speedLimits = powerOfTwoRatioLimits(speedup);
-speedAxis.ColorScale = "log";
-clim(speedAxis,speedLimits);
-neutralPosition = log2(1/speedLimits(1))/ ...
-    log2(speedLimits(2)/speedLimits(1));
-speedColors = divergingMap(257,neutralPosition);
-colormap(speedAxis,speedColors);
-speedBar = colorbar(speedAxis);
-speedExponents = round(log2(speedLimits(1))): ...
-    round(log2(speedLimits(2)));
-speedTicks = 2.^speedExponents;
-speedBar.Ticks = speedTicks;
-speedBar.TickLabels = compose("%g",speedTicks);
-speedBar.Label.String = "classical/sketched core-time ratio";
-speedBar.Color = [0.1 0.1 0.1];
-title(speedAxis,"Speedup ratio",Color="black");
-
 residualAxis = nexttile(layout);
-drawImage(residualAxis,residualRatio);
-residualLimits = ratioLimits(residualRatio);
-clim(residualAxis,residualLimits);
-neutralPosition = (1-residualLimits(1))/diff(residualLimits);
-residualColors = divergingMap(257,neutralPosition);
-colormap(residualAxis,residualColors);
-residualBar = colorbar(residualAxis);
-residualBar.Label.String = "sketched/classical residual ratio";
-residualBar.Color = [0.1 0.1 0.1];
-title(residualAxis,"Residual-quality ratio",Color="black");
-
-yLabels = compose("%g (n=%g)",grids,matrixSizes);
-formatAxis(speedAxis,dimensions,yLabels);
-formatAxis(residualAxis,dimensions,yLabels);
-residualAxis.YTickLabel = [];
 hold(speedAxis,"on");
 hold(residualAxis,"on");
-residualLabels = annotateAxes( ...
-    speedAxis,residualAxis,speedup,residualRatio,statuses);
-xlabel(speedAxis,"Krylov dimension k",Color="black");
-xlabel(residualAxis,"Krylov dimension k",Color="black");
-ylabel(speedAxis,"Grid size (matrix dimension)",Color="black");
-
-if suite == "gmres"
-    comparison = "GMRES vs. sGMRES";
-else
-    comparison = "RR vs. sRR";
+colors = [0 0.4470 0.6980;0.8350 0.3690 0];
+if numel(grids) > 2
+    colors = lines(numel(grids));
 end
-sgtitle(layout,comparison+ ...
-    ": speedup and residual impact", ...
-    Color="black",FontWeight="bold");
+markers = ["o" "s" "^" "d" "v"];
+handles = gobjects(numel(grids),1);
+for g = 1:numel(grids)
+    color = colors(g,:);
+    faintColor = 0.55*color+0.45;
+    marker = markers(mod(g-1,numel(markers))+1);
+    label = sprintf("g = %g (n = %g)",grids(g),matrixSizes(g));
+    handles(g) = plot(speedAxis,dimensions,speedup(g,:), ...
+        Color=color,Marker=marker,MarkerFaceColor=color, ...
+        LineWidth=1.8,MarkerSize=5,DisplayName=label);
+    % Draw each contiguous band separately so missing settings remain gaps.
+    valid = isfinite(quartileLow(g,:));
+    starts = find(diff([false valid false]) == 1);
+    stops = find(diff([false valid false]) == -1)-1;
+    for segment = 1:numel(starts)
+        idx = starts(segment):stops(segment);
+        fill(residualAxis,[dimensions(idx) fliplr(dimensions(idx))], ...
+            [quartileLow(g,idx) fliplr(quartileHigh(g,idx))],color, ...
+            FaceAlpha=0.13,EdgeColor="none",HandleVisibility="off");
+    end
+    offset = (g-(numel(grids)+1)/2)*0.045;
+    errorbar(residualAxis,dimensions*2^offset,residualRatio(g,:), ...
+        residualRatio(g,:)-minimum(g,:),maximum(g,:)-residualRatio(g,:), ...
+        LineStyle="none",Color=faintColor,CapSize=6, ...
+        LineWidth=0.9,HandleVisibility="off");
+    for k = 1:numel(dimensions)
+        values = samples{g,k};
+        if isempty(values)
+            continue
+        end
+        if numel(values) == 1
+            jitter = 0;
+        else
+            jitter = linspace(-0.06,0.06,numel(values));
+        end
+        scatter(residualAxis,dimensions(k)*2.^(offset+jitter),values, ...
+            22,color,marker,"filled",MarkerFaceAlpha=0.3, ...
+            MarkerEdgeAlpha=0.3,HandleVisibility="off");
+    end
+    plot(residualAxis,dimensions,residualRatio(g,:), ...
+        Color=color,Marker=marker,MarkerFaceColor=color, ...
+        LineWidth=1.8,MarkerSize=5,HandleVisibility="off");
+    hollow = statuses(g,:) == "unconverged";
+    plot(speedAxis,dimensions(hollow),speedup(g,hollow), ...
+        LineStyle="none",Marker=marker,MarkerFaceColor="white", ...
+        Color=color,LineWidth=1.4,MarkerSize=6,HandleVisibility="off");
+    plot(residualAxis,dimensions(hollow),residualRatio(g,hollow), ...
+        LineStyle="none",Marker=marker,MarkerFaceColor="white", ...
+        Color=color,LineWidth=1.4,MarkerSize=6,HandleVisibility="off");
+end
+
+for ax = [speedAxis residualAxis]
+    ax.XScale = "log";
+    ax.XTick = dimensions;
+    ax.XTickLabel = string(dimensions);
+    ax.XLim = [min(dimensions)/1.12 max(dimensions)*1.12];
+    ax.YGrid = "on";
+    ax.XMinorTick = "off";
+    ax.FontSize = 11;
+    ax.Color = "white";
+    ax.XColor = [0.1 0.1 0.1];
+    ax.YColor = [0.1 0.1 0.1];
+    box(ax,"off");
+    yline(ax,1,"--",Color=[0.35 0.35 0.35],HandleVisibility="off");
+    xlabel(ax,"Krylov dimension k",Color="black");
+end
+speedAxis.YScale = "log";
+positive = speedup(isfinite(speedup) & speedup > 0);
+if any(isfinite(speedup(:)) & speedup(:) <= 0)
+    error("experiments:plotCrossover:NonpositiveSpeedup", ...
+        "Speedup ratios must be positive for logarithmic scaling.");
+end
+exponents = floor(log2(min([positive;1]))):ceil(log2(max([positive;1])));
+if numel(exponents) == 1
+    exponents = exponents+[-1 0 1];
+end
+speedAxis.YTick = 2.^exponents;
+speedAxis.YTickLabel = compose("%g",speedAxis.YTick);
+speedAxis.YLim = [speedAxis.YTick(1)/1.05 speedAxis.YTick(end)*1.15];
+residualValues = [minimum(:);maximum(:);1];
+residualValues = residualValues(isfinite(residualValues));
+padding = max(0.05,0.1*(max(residualValues)-min(residualValues)));
+residualAxis.YLim = [max(0,min(residualValues)-padding) max(residualValues)+padding];
+title(speedAxis,"Median speedup",Color="black");
+ylabel(speedAxis,"Classical / sketched core time",Color="black");
+title(residualAxis,"Residual impact across sketches",Color="black");
+ylabel(residualAxis,"Sketched / classical residual",Color="black");
+key = legend(speedAxis,handles,Location="northoutside", ...
+    Orientation="horizontal",Box="off",TextColor="black");
+key.Layout.Tile = "north";
+if suite == "gmres"
+    comparison = "GMRES versus sGMRES";
+else
+    comparison = "RR versus sRR";
+end
+title(layout,comparison,Color="black",FontWeight="bold");
 
 pngPath = fullfile(outputDirectory,suite+"_crossover.png");
 pdfPath = fullfile(outputDirectory,suite+"_crossover.pdf");
 exportgraphics(figureHandle,pngPath,Resolution=180);
 exportgraphics(figureHandle,pdfPath,ContentType="vector");
 paths = [string(pngPath);string(pdfPath)];
-data = struct( ...
-    Suite=suite, ...
-    GridSizes=grids, ...
-    Dimensions=dimensions, ...
-    Speedup=speedup, ...
-    ResidualRatio=residualRatio, ...
-    ResidualLabels=residualLabels, ...
-    Statuses=statuses, ...
-    SpeedColorLimits=speedLimits, ...
-    ResidualColorLimits=residualLimits, ...
-    SpeedColorScale=string(speedAxis.ColorScale), ...
-    ResidualColorScale=string(residualAxis.ColorScale), ...
-    SpeedColorTicks=reshape(speedBar.Ticks,1,[]), ...
-    SpeedColorTickLabels=reshape(string(speedBar.TickLabels),1,[]), ...
-    SpeedColormap=speedColors, ...
-    ResidualColormap=residualColors);
+data = struct(Suite=suite,GridSizes=grids,Dimensions=dimensions, ...
+    Speedup=speedup,ResidualRatio=residualRatio, ...
+    QuartileLow=quartileLow,QuartileHigh=quartileHigh, ...
+    Minimum=minimum,Maximum=maximum,Statuses=statuses, ...
+    XScale=string(speedAxis.XScale),SpeedScale=string(speedAxis.YScale), ...
+    ResidualScale=string(residualAxis.YScale),SpeedTicks=speedAxis.YTick);
+data.Samples = samples;
 clear cleanup
-end
-
-function drawImage(axisHandle,values)
-imageHandle = imagesc(axisHandle,values);
-imageHandle.AlphaData = isfinite(values);
-axisHandle.Color = [0.82 0.82 0.82];
-axisHandle.YDir = "normal";
-box(axisHandle,"on");
-end
-
-function formatAxis(axisHandle,dimensions,yLabels)
-axisHandle.XTick = 1:numel(dimensions);
-axisHandle.XTickLabel = string(dimensions);
-axisHandle.YTick = 1:numel(yLabels);
-axisHandle.YTickLabel = yLabels;
-axisHandle.TickLength = [0 0];
-axisHandle.XColor = [0.1 0.1 0.1];
-axisHandle.YColor = [0.1 0.1 0.1];
-end
-
-function residualLabels = annotateAxes( ...
-        speedAxis,residualAxis,speedup,residualRatio,statuses)
-residualLabels = strings(size(residualRatio));
-for row = 1:size(statuses,1)
-    for column = 1:size(statuses,2)
-        status = statuses(row,column);
-        if isfinite(speedup(row,column))
-            text(speedAxis,column,row,sprintf("%.2gx",speedup(row,column)), ...
-                HorizontalAlignment="center",FontWeight="bold", ...
-                Color="black");
-        end
-        if isfinite(residualRatio(row,column))
-            label = text(residualAxis,column,row, ...
-                sprintf("%.2fx",residualRatio(row,column)), ...
-                HorizontalAlignment="center",FontWeight="bold", ...
-                Color="black");
-            residualLabels(row,column) = string(label.String);
-        end
-        if status == "unconverged"
-            markerColumn = column+0.32;
-            markerRow = row-0.32;
-            plot(speedAxis,markerColumn,markerRow,"ko", ...
-                MarkerSize=8,LineWidth=1.5);
-            plot(residualAxis,markerColumn,markerRow,"ko", ...
-                MarkerSize=8,LineWidth=1.5);
-        elseif status ~= "ok"
-            text(speedAxis,column,row,"x",HorizontalAlignment="center", ...
-                FontSize=15,FontWeight="bold",Color=[0.2 0.2 0.2]);
-            text(residualAxis,column,row,"x",HorizontalAlignment="center", ...
-                FontSize=15,FontWeight="bold",Color=[0.2 0.2 0.2]);
-        end
-    end
-end
-end
-
-function limits = ratioLimits(values)
-finiteValues = values(isfinite(values));
-if isempty(finiteValues)
-    limits = [0 2];
-else
-    limits = [min([finiteValues;1]) max([finiteValues;1])];
-    if limits(1) == limits(2)
-        width = max(0.5,0.1*abs(limits(1)));
-        limits = [max(0,limits(1)-width) limits(2)+width];
-    end
-end
-end
-
-function limits = powerOfTwoRatioLimits(values)
-finiteValues = values(isfinite(values));
-if isempty(finiteValues)
-    limits = [0.5 2];
-    return
-end
-if any(finiteValues <= 0)
-    error("experiments:plotCrossover:NonpositiveSpeedup", ...
-        "Speedup ratios must be positive for logarithmic color scaling.");
-end
-exponents = [floor(log2(min([finiteValues(:);1]))) ...
-    ceil(log2(max([finiteValues(:);1])))];
-if exponents(1) == exponents(2)
-    exponents = exponents+[-1 1];
-end
-limits = 2.^exponents;
-end
-
-function colors = divergingMap(count,neutralPosition)
-blue = [0.15 0.35 0.70];
-white = [1 1 1];
-red = [0.75 0.15 0.20];
-if neutralPosition <= 0
-    colors = interpolateColors(white,red,count);
-elseif neutralPosition >= 1
-    colors = interpolateColors(blue,white,count);
-else
-    lowerCount = round(neutralPosition*(count-1))+1;
-    upperCount = count-lowerCount+1;
-    lower = interpolateColors(blue,white,lowerCount);
-    upper = interpolateColors(white,red,upperCount);
-    colors = [lower;upper(2:end,:)];
-end
-end
-
-function colors = interpolateColors(first,last,count)
-colors = [linspace(first(1),last(1),count)', ...
-    linspace(first(2),last(2),count)', ...
-    linspace(first(3),last(3),count)'];
 end
