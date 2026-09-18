@@ -9,10 +9,11 @@ arguments
 end
 
 required = ["Suite" "GridSize" "MatrixSize" "Dimension" ...
-    "ComparableCoreSpeedup" "CellStatus"];
+    "ComparableCoreSpeedup" "ComparableCoreSpeedupQ25" ...
+    "ComparableCoreSpeedupQ75" "CellStatus"];
 if any(~ismember(required,string(summary.Properties.VariableNames)))
     error("experiments:plotCrossover:InvalidSummary", ...
-        "The summary table does not contain the required plot columns.");
+        "Recompute the summary with experiments.summarize to include timing quartiles.");
 end
 requiredRaw = ["Suite" "GridSize" "Dimension" "Method" "SketchTrial" ...
     "Repetition" "Status" "AchievedDimension" "CoreTime" "WallTime" ...
@@ -48,6 +49,8 @@ function [paths,data] = plotSuite(raw,summary,suite,outputDirectory)
 grids = unique(summary.GridSize,"sorted");
 dimensions = unique(summary.Dimension,"sorted")';
 speedup = NaN(numel(grids),numel(dimensions));
+speedLow = NaN(size(speedup));
+speedHigh = NaN(size(speedup));
 residualRatio = NaN(size(speedup));
 quartileLow = NaN(size(speedup));
 quartileHigh = NaN(size(speedup));
@@ -69,6 +72,8 @@ for row = 1:height(summary)
         continue
     end
     speedup(g,k) = summary.ComparableCoreSpeedup(row);
+    speedLow(g,k) = summary.ComparableCoreSpeedupQ25(row);
+    speedHigh(g,k) = summary.ComparableCoreSpeedupQ75(row);
     members = raw.GridSize == grids(g) & raw.Dimension == dimensions(k);
     values = experiments.residualSamples(raw(members,:),suite,dimensions(k));
     if isempty(values)
@@ -110,9 +115,10 @@ for g = 1:numel(grids)
     faintColor = 0.55*color+0.45;
     marker = markers(mod(g-1,numel(markers))+1);
     label = sprintf("g = %g (n = %g)",grids(g),matrixSizes(g));
-    handles(g) = plot(speedAxis,dimensions,speedup(g,:), ...
+    handles(g) = errorbar(speedAxis,dimensions,speedup(g,:), ...
+        speedup(g,:)-speedLow(g,:),speedHigh(g,:)-speedup(g,:), ...
         Color=color,Marker=marker,MarkerFaceColor=color, ...
-        LineWidth=1.8,MarkerSize=5,DisplayName=label);
+        LineWidth=1.5,MarkerSize=5,CapSize=7,DisplayName=label);
     % Draw each contiguous band separately so missing settings remain gaps.
     valid = isfinite(quartileLow(g,:));
     starts = find(diff([false valid false]) == 1);
@@ -164,7 +170,8 @@ for ax = [speedAxis residualAxis]
     xlabel(ax,"Krylov dimension k",Color="black");
 end
 speedAxis.YScale = "log";
-positive = speedup(isfinite(speedup) & speedup > 0);
+speedValues = [speedup(:);speedLow(:);speedHigh(:)];
+positive = speedValues(isfinite(speedValues) & speedValues > 0);
 if any(isfinite(speedup(:)) & speedup(:) <= 0)
     error("experiments:plotCrossover:NonpositiveSpeedup", ...
         "Speedup ratios must be positive for logarithmic scaling.");
@@ -201,6 +208,7 @@ exportgraphics(figureHandle,pdfPath,ContentType="vector");
 paths = [string(pngPath);string(pdfPath)];
 data = struct(Suite=suite,GridSizes=grids,Dimensions=dimensions, ...
     Speedup=speedup,ResidualRatio=residualRatio, ...
+    SpeedQuartileLow=speedLow,SpeedQuartileHigh=speedHigh, ...
     QuartileLow=quartileLow,QuartileHigh=quartileHigh, ...
     Minimum=minimum,Maximum=maximum,Statuses=statuses, ...
     XScale=string(speedAxis.XScale),SpeedScale=string(speedAxis.YScale), ...

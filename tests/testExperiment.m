@@ -121,6 +121,8 @@ verifyEqual(testCase,summary.FixedWorkPairs,2);
 verifyEqual(testCase,summary.ComparablePairs,1);
 verifyEqual(testCase,summary.ConvergedPairs,1);
 verifyEqual(testCase,summary.ComparableCoreSpeedup,2,AbsTol=1e-14);
+verifyEqual(testCase,summary.ComparableCoreSpeedupQ25,2,AbsTol=1e-14);
+verifyEqual(testCase,summary.ComparableCoreSpeedupQ75,2,AbsTol=1e-14);
 verifyEqual(testCase,summary.CellStatus,"ok");
 end
 
@@ -165,6 +167,8 @@ verifyEqual(testCase,summary.FixedWorkPairs,1);
 verifyEqual(testCase,summary.ComparablePairs,0);
 verifyEqual(testCase,summary.CellStatus,"not-comparable");
 verifyTrue(testCase,isnan(summary.ComparableCoreSpeedup));
+verifyTrue(testCase,isnan(summary.ComparableCoreSpeedupQ25));
+verifyTrue(testCase,isnan(summary.ComparableCoreSpeedupQ75));
 end
 
 function testRunCrossoverWritesProtectedBundle(testCase)
@@ -244,6 +248,8 @@ end
 verifyEqual(testCase,numel(findall(groot,Type="figure")),figuresBefore);
 data = plotData([plotData.Suite] == "gmres");
 verifyEqual(testCase,data.Speedup,[2 NaN]);
+verifyEqual(testCase,data.SpeedQuartileLow,[2 NaN]);
+verifyEqual(testCase,data.SpeedQuartileHigh,[2 NaN]);
 verifyEqual(testCase,data.ResidualRatio,[3 NaN]);
 verifyEqual(testCase,data.QuartileLow,[2 NaN]);
 verifyEqual(testCase,data.QuartileHigh,[4 NaN]);
@@ -284,6 +290,21 @@ verifyError(testCase,@() experiments.residualSamples([raw;raw(1,:)],"gmres",3), 
 raw.RelativeResidual(raw.SketchTrial == 5 & raw.Method == "GMRES") = 0;
 verifyError(testCase,@() experiments.residualSamples(raw,"gmres",3), ...
     "experiments:plotCrossover:NonfiniteResidualRatio");
+end
+
+function testSpeedQuartilesUsePairedQualityGatedRatios(testCase)
+raw = syntheticRows(Suite=repmat("gmres",10,1), ...
+    Method=repmat(["GMRES";"sGMRES"],5,1), ...
+    Repetition=repelem((1:5)',2), ...
+    CoreTime=[1;1;4;2;9;3;16;4;500;5], ...
+    WallTime=ones(10,1)*1000, ...
+    RelativeResidual=[0.01;0.01;0.01;0.01;0.01;0.01;0.01;0.01;0.01;1]);
+cfg = experiments.config(GridSizes=4,Dimensions=3,MakePlots=false);
+summary = experiments.summarize(raw,cfg);
+verifyEqual(testCase,summary.ComparablePairs,4);
+verifyEqual(testCase,summary.ComparableCoreSpeedup,2.5);
+verifyEqual(testCase,summary.ComparableCoreSpeedupQ25,1.75);
+verifyEqual(testCase,summary.ComparableCoreSpeedupQ75,3.25);
 end
 
 function raw = plotFixture()

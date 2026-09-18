@@ -79,7 +79,10 @@ Every bundle contains `raw.csv`, `summary.csv`, and `metadata.json`, plus
 enabled. Each chart has one line per grid size, with Krylov dimension on a
 logarithmic horizontal axis. The left panel plots the median paired
 `classical core time / sketched core time` on a logarithmic vertical axis;
-values above one favor the sketched method. The right panel plots the median
+values above one favor the sketched method. Error bars show the 25th–75th
+percentiles of the same paired ratios used for the median (30 pairs per
+setting in the lecture sweep). They show timing spread, not confidence
+intervals. The right panel plots the median
 sketched/classical true-residual ratio on a linear vertical axis, with:
 
 - a shaded band for the 25th–75th percentiles;
@@ -99,11 +102,13 @@ To regenerate charts from saved measurements without rerunning the experiment:
 ```matlab
 folder = "results/lecture";
 raw = readtable(fullfile(folder,"raw.csv"),TextType="string");
-summary = readtable(fullfile(folder,"summary.csv"),TextType="string");
+metadata = jsondecode(fileread(fullfile(folder,"metadata.json")));
+summary = experiments.summarize(raw,metadata.Config);
 [paths,plotData] = experiments.plotCrossover(raw,summary,folder);
 ```
 
-`plotData` exposes the plotted medians, quartiles, extrema, and individual
+Recomputing the summary adds timing quartiles to older result bundles without
+rerunning any timed method. `plotData` exposes the plotted medians, quartiles, extrema, and individual
 sketch ratios for verification. The plotting interface now requires `raw`
 before `summary`; old summary-only calls must be updated because a median
 cannot reconstruct the spread.
