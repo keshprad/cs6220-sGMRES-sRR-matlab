@@ -89,9 +89,8 @@ sketched/classical true-residual ratio on a linear vertical axis, with:
 Residual spread uses one median paired residual ratio per sketch trial, so
 repeated timings do not count as independent residual samples. Quartiles use
 linear interpolation at ranks `1+(N-1)*p`. The bands describe observed spread,
-not confidence intervals. Dashed lines mark a ratio of one. Hollow markers
-identify settings where no comparable pair has both residuals at or below
-the configured residual threshold. Settings that fail the fixed-work or
+not confidence intervals. Dashed lines mark a ratio of one. All plotted
+settings use filled markers. Settings that fail the fixed-work or
 accuracy gates are left as gaps. Explanatory text belongs in the figure
 caption; it is not embedded beneath the chart.
 
